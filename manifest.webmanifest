@@ -1,7 +1,7 @@
 {
-  "name": "Finanzas",
+  "name": "Finanzas Compartidas",
   "short_name": "Finanzas",
-  "description": "Control de ingresos, gastos, análisis y metas de ahorro.",
+  "description": "Control compartido de ingresos, gastos, análisis y metas de ahorro.",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",

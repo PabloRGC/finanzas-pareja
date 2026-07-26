@@ -219,7 +219,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--primary); box-sh
         <div class="logo">$</div>
         <div>
           <h1>Finanzas</h1>
-          <p>Control compartido · V3.2 Saldo inicial</p>
+          <p id="syncTopStatus">Control compartido · V4 Sync</p>
         </div>
       </div>
       <button id="installBtn" class="install-btn hidden" type="button">Instalar</button>
@@ -487,7 +487,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--primary); box-sh
       <div class="section-heading">
         <p class="eyebrow">Consultar</p>
         <h2>Historial</h2>
-        <p class="muted">Todos los movimientos guardados en este navegador.</p>
+        <p class="muted">Movimientos guardados localmente o sincronizados en la nube.</p>
       </div>
       <div class="toolbar">
         <label>Tipo
@@ -514,7 +514,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--primary); box-sh
       <div class="section-heading">
         <p class="eyebrow">Configurar</p>
         <h2>Ajustes</h2>
-        <p class="muted">Saldo inicial, respaldo y migración de información.</p>
+        <p class="muted">Saldo inicial, sincronización, respaldo y migración de información.</p>
       </div>
       <form id="settingsForm" class="form-card">
         <div class="form-grid">
@@ -529,6 +529,32 @@ input:focus, select:focus, textarea:focus { border-color: var(--primary); box-sh
           <button class="primary-btn" type="submit">Guardar ajustes</button>
         </div>
       </form>
+
+      <section class="panel">
+        <div class="panel-title">
+          <div>
+            <h3>Sincronización</h3>
+            <p id="syncStatusText" class="muted">Sin conectar. La información se guarda solo en este celular.</p>
+          </div>
+          <span id="syncStatusPill" class="pill amber">Local</span>
+        </div>
+        <div class="tip"><strong>Para usarla ambos:</strong> conecten la app a Firebase y usen el mismo código de grupo en los dos celulares. Antes de activar, exporta un respaldo JSON.</div>
+        <div class="form-grid">
+          <label>Código de grupo compartido
+            <input id="syncGroupId" type="text" placeholder="Ej. familia-2026-x7k9" autocomplete="off" />
+          </label>
+          <label>Configuración de Firebase opcional
+            <textarea id="firebaseConfigInput" placeholder='Pega aquí el objeto firebaseConfig si no lo dejaste fijo en index.html. Ejemplo: {"apiKey":"...","authDomain":"...","projectId":"...","appId":"..."}'></textarea>
+          </label>
+        </div>
+        <div class="form-actions">
+          <button id="generateGroupBtn" class="ghost-btn" type="button">Generar código de grupo</button>
+          <button id="connectSyncBtn" class="primary-btn" type="button">Conectar sincronización</button>
+          <button id="uploadLocalBtn" class="ghost-btn" type="button">Subir datos de este celular a la nube</button>
+          <button id="disconnectSyncBtn" class="danger-btn" type="button">Desactivar sincronización en este celular</button>
+        </div>
+        <p class="small">Usa el mismo proyecto de Firebase y el mismo código de grupo en ambos teléfonos. Los movimientos, metas y ajustes se verán en tiempo real.</p>
+      </section>
       <section class="panel">
         <div class="panel-title"><h3>Respaldo</h3></div>
         <div class="form-actions">
@@ -562,7 +588,14 @@ input:focus, select:focus, textarea:focus { border-color: var(--primary); box-sh
 
 <script>
 const STORAGE_KEY = 'finanzasPareja.v1';
-const APP_VERSION = '3.2.0-saldo-inicial';
+const SYNC_STORAGE_KEY = 'finanzasPareja.sync.v1';
+const CLIENT_ID_KEY = 'finanzasPareja.clientId.v1';
+const FIREBASE_SDK_VERSION = '10.12.5';
+
+// Opcional: puedes pegar aquí tu configuración de Firebase para no capturarla en cada teléfono.
+// Ejemplo: const FIREBASE_CONFIG_PRESET = { apiKey: '...', authDomain: '...', projectId: '...', appId: '...' };
+const FIREBASE_CONFIG_PRESET = null;
+const APP_VERSION = '4.0.0-sync-firebase';
 
 const defaultState = {
   version: APP_VERSION,
@@ -580,8 +613,31 @@ const $$ = (selector) => Array.from(document.querySelectorAll(selector));
 function clone(obj) { return JSON.parse(JSON.stringify(obj)); }
 
 let state = loadState();
+let syncSettings = loadSyncSettings();
+let syncRuntime = { enabled: false, app: null, db: null, auth: null, user: null, groupId: '', unsubscribers: [], applyingRemote: false, modules: null };
 let deferredPrompt = null;
 let refreshOnControllerChange = false;
+
+function getClientId() {
+  let id = localStorage.getItem(CLIENT_ID_KEY);
+  if (!id) { id = makeId(); localStorage.setItem(CLIENT_ID_KEY, id); }
+  return id;
+}
+const CLIENT_ID = getClientId();
+
+function loadSyncSettings() {
+  try {
+    const raw = localStorage.getItem(SYNC_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : { enabled: false, groupId: '', config: null };
+  } catch (error) {
+    console.warn('No se pudo cargar configuración de sincronización', error);
+    return { enabled: false, groupId: '', config: null };
+  }
+}
+
+function saveSyncSettings() {
+  localStorage.setItem(SYNC_STORAGE_KEY, JSON.stringify(syncSettings));
+}
 
 function loadState() {
   try {
@@ -623,7 +679,8 @@ function normalizeTransaction(tx) {
     date,
     note: tx.note || tx.nota || tx.descripcion || '',
     time: tx.time || '12:00',
-    createdAt: tx.createdAt || new Date().toISOString()
+    createdAt: tx.createdAt || new Date().toISOString(),
+    updatedAt: tx.updatedAt || tx.createdAt || new Date().toISOString()
   };
 }
 
@@ -647,13 +704,242 @@ function normalizeGoal(goal) {
       date: normalizeDate(c.date) || todayISO(),
       note: c.note || ''
     })).filter((c) => c.amount > 0) : [],
-    createdAt: goal.createdAt || new Date().toISOString()
+    createdAt: goal.createdAt || new Date().toISOString(),
+    updatedAt: goal.updatedAt || goal.createdAt || new Date().toISOString()
   };
 }
 
 function saveState() {
   state.version = APP_VERSION;
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+
+function sanitizeGroupId(value) {
+  return String(value || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9_-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 80);
+}
+
+function hasLocalData() {
+  return state.transactions.length > 0 || state.goals.length > 0 || Number(state.settings.initialBalance || 0) > 0 || Number(state.settings.monthlyGoal || 0) > 0;
+}
+
+function parseFirebaseConfig(text) {
+  const raw = String(text || '').trim();
+  if (!raw) return null;
+  let cleaned = raw;
+  const match = raw.match(/firebaseConfig\s*=\s*(\{[\s\S]*\})\s*;?$/);
+  if (match) cleaned = match[1];
+  cleaned = cleaned.replace(/([{,]\s*)([A-Za-z0-9_]+)\s*:/g, '$1"$2":').replace(/'/g, '"');
+  try { return JSON.parse(cleaned); }
+  catch (error) { throw new Error('No pude leer la configuración de Firebase. Pega el objeto firebaseConfig completo.'); }
+}
+
+function getActiveFirebaseConfig() {
+  return FIREBASE_CONFIG_PRESET || syncSettings.config || null;
+}
+
+async function loadFirebaseModules() {
+  if (syncRuntime.modules) return syncRuntime.modules;
+  const [appMod, authMod, fsMod] = await Promise.all([
+    import(`https://www.gstatic.com/firebasejs/${FIREBASE_SDK_VERSION}/firebase-app.js`),
+    import(`https://www.gstatic.com/firebasejs/${FIREBASE_SDK_VERSION}/firebase-auth.js`),
+    import(`https://www.gstatic.com/firebasejs/${FIREBASE_SDK_VERSION}/firebase-firestore.js`)
+  ]);
+  syncRuntime.modules = {
+    initializeApp: appMod.initializeApp,
+    getApps: appMod.getApps,
+    getApp: appMod.getApp,
+    getAuth: authMod.getAuth,
+    signInAnonymously: authMod.signInAnonymously,
+    getFirestore: fsMod.getFirestore,
+    collection: fsMod.collection,
+    doc: fsMod.doc,
+    getDoc: fsMod.getDoc,
+    getDocs: fsMod.getDocs,
+    setDoc: fsMod.setDoc,
+    deleteDoc: fsMod.deleteDoc,
+    onSnapshot: fsMod.onSnapshot,
+    serverTimestamp: fsMod.serverTimestamp
+  };
+  return syncRuntime.modules;
+}
+
+function txCollection() { return syncRuntime.modules.collection(syncRuntime.db, 'finanzasParejaV4', syncRuntime.groupId, 'transactions'); }
+function goalsCollection() { return syncRuntime.modules.collection(syncRuntime.db, 'finanzasParejaV4', syncRuntime.groupId, 'goals'); }
+function settingsDoc() { return syncRuntime.modules.doc(syncRuntime.db, 'finanzasParejaV4', syncRuntime.groupId, 'settings', 'general'); }
+function infoDoc() { return syncRuntime.modules.doc(syncRuntime.db, 'finanzasParejaV4', syncRuntime.groupId, 'meta', 'info'); }
+
+async function countCloudData() {
+  const { getDocs, getDoc } = syncRuntime.modules;
+  const [txSnap, goalSnap, settingsSnap] = await Promise.all([getDocs(txCollection()), getDocs(goalsCollection()), getDoc(settingsDoc())]);
+  return { transactions: txSnap.size, goals: goalSnap.size, hasSettings: settingsSnap.exists(), empty: txSnap.empty && goalSnap.empty && !settingsSnap.exists() };
+}
+
+async function connectSyncFromInputs() {
+  const groupId = sanitizeGroupId($('#syncGroupId').value);
+  if (groupId.length < 6) { showToast('Usa un código de grupo de al menos 6 caracteres.'); return; }
+  let config = FIREBASE_CONFIG_PRESET || syncSettings.config;
+  const typedConfig = $('#firebaseConfigInput').value.trim();
+  if (typedConfig) config = parseFirebaseConfig(typedConfig);
+  if (!config || !config.apiKey || !config.projectId || !config.appId) { showToast('Falta configurar Firebase.'); return; }
+  syncSettings = { enabled: true, groupId, config: FIREBASE_CONFIG_PRESET ? null : config };
+  saveSyncSettings();
+  await connectSync({ askBeforeReplacingLocal: true });
+}
+
+async function connectSync(options = {}) {
+  const config = getActiveFirebaseConfig();
+  const groupId = sanitizeGroupId(syncSettings.groupId);
+  if (!syncSettings.enabled || !config || !groupId) { updateSyncUI(); return; }
+  try {
+    updateSyncUI('Conectando...');
+    const modules = await loadFirebaseModules();
+    const app = modules.getApps().length ? modules.getApp() : modules.initializeApp(config);
+    const auth = modules.getAuth(app);
+    await modules.signInAnonymously(auth);
+    const db = modules.getFirestore(app);
+    stopSync(false);
+    syncRuntime.app = app;
+    syncRuntime.auth = auth;
+    syncRuntime.db = db;
+    syncRuntime.user = auth.currentUser;
+    syncRuntime.groupId = groupId;
+    syncRuntime.enabled = true;
+
+    const cloud = await countCloudData();
+    if (cloud.empty && hasLocalData()) {
+      const ok = confirm('La nube está vacía. ¿Quieres subir los datos de este celular para iniciar el grupo compartido?');
+      if (ok) await pushLocalStateToCloud(false);
+    } else if (!cloud.empty && hasLocalData() && options.askBeforeReplacingLocal) {
+      const ok = confirm('Ya hay datos en la nube para este grupo. Acepta para sincronizar y usar esos datos. Cancela si primero quieres exportar un respaldo o subir los datos de este celular.');
+      if (!ok) { stopSync(); showToast('Sincronización cancelada.'); return; }
+    }
+
+    startSyncListeners();
+    updateSyncUI();
+    showToast('Sincronización conectada.');
+  } catch (error) {
+    console.error(error);
+    stopSync();
+    showToast(error.message || 'No se pudo conectar Firebase.');
+    updateSyncUI('Error al conectar');
+  }
+}
+
+function startSyncListeners() {
+  const { onSnapshot } = syncRuntime.modules;
+  syncRuntime.unsubscribers.forEach((fn) => { try { fn(); } catch (_) {} });
+  syncRuntime.unsubscribers = [];
+
+  const unsubSettings = onSnapshot(settingsDoc(), (snap) => {
+    if (!snap.exists()) return;
+    const data = snap.data() || {};
+    syncRuntime.applyingRemote = true;
+    state.settings = { ...defaultState.settings, ...(data.settings || {}) };
+    if (data.categories) state.categories = {
+      expense: Array.isArray(data.categories.expense) && data.categories.expense.length ? data.categories.expense : state.categories.expense,
+      income: Array.isArray(data.categories.income) && data.categories.income.length ? data.categories.income : state.categories.income
+    };
+    saveState(); fillCategorySelects(); render();
+    syncRuntime.applyingRemote = false;
+  }, (error) => { console.error(error); showToast('Error sincronizando ajustes.'); });
+
+  const unsubTx = onSnapshot(txCollection(), (snap) => {
+    syncRuntime.applyingRemote = true;
+    state.transactions = snap.docs.map((d) => normalizeTransaction({ id: d.id, ...d.data() })).filter(Boolean);
+    saveState(); render();
+    syncRuntime.applyingRemote = false;
+  }, (error) => { console.error(error); showToast('Error sincronizando movimientos.'); });
+
+  const unsubGoals = onSnapshot(goalsCollection(), (snap) => {
+    syncRuntime.applyingRemote = true;
+    state.goals = snap.docs.map((d) => normalizeGoal({ id: d.id, ...d.data() })).filter(Boolean);
+    saveState(); render();
+    syncRuntime.applyingRemote = false;
+  }, (error) => { console.error(error); showToast('Error sincronizando metas.'); });
+
+  syncRuntime.unsubscribers.push(unsubSettings, unsubTx, unsubGoals);
+}
+
+function stopSync(update = true) {
+  syncRuntime.unsubscribers.forEach((fn) => { try { fn(); } catch (_) {} });
+  syncRuntime.unsubscribers = [];
+  syncRuntime.enabled = false;
+  syncRuntime.db = null;
+  syncRuntime.auth = null;
+  syncRuntime.user = null;
+  syncRuntime.groupId = '';
+  if (update) updateSyncUI();
+}
+
+async function pushLocalStateToCloud(showDone = true) {
+  if (!syncRuntime.enabled || !syncRuntime.db) { showToast('Primero conecta la sincronización.'); return; }
+  try {
+    updateSyncUI('Subiendo datos...');
+    const { setDoc, deleteDoc, getDocs, doc, serverTimestamp } = syncRuntime.modules;
+    await setDoc(infoDoc(), { appVersion: APP_VERSION, updatedAt: serverTimestamp(), updatedBy: CLIENT_ID }, { merge: true });
+    await setDoc(settingsDoc(), { settings: state.settings, categories: state.categories, updatedAt: serverTimestamp(), updatedBy: CLIENT_ID }, { merge: true });
+
+    const localTxIds = new Set(state.transactions.map((tx) => tx.id));
+    const localGoalIds = new Set(state.goals.map((goal) => goal.id));
+    const [remoteTx, remoteGoals] = await Promise.all([getDocs(txCollection()), getDocs(goalsCollection())]);
+    const deletes = [];
+    remoteTx.forEach((d) => { if (!localTxIds.has(d.id)) deletes.push(deleteDoc(d.ref)); });
+    remoteGoals.forEach((d) => { if (!localGoalIds.has(d.id)) deletes.push(deleteDoc(d.ref)); });
+    await Promise.all(deletes);
+
+    const txWrites = state.transactions.map((tx) => setDoc(doc(txCollection(), tx.id), { ...tx, updatedAt: tx.updatedAt || new Date().toISOString(), updatedBy: CLIENT_ID }, { merge: true }));
+    const goalWrites = state.goals.map((goal) => setDoc(doc(goalsCollection(), goal.id), { ...goal, updatedAt: goal.updatedAt || new Date().toISOString(), updatedBy: CLIENT_ID }, { merge: true }));
+    await Promise.all([...txWrites, ...goalWrites]);
+    updateSyncUI();
+    if (showDone) showToast('Datos subidos a la nube.');
+  } catch (error) {
+    console.error(error); showToast('No se pudieron subir los datos.'); updateSyncUI('Error al subir');
+  }
+}
+
+async function syncSaveSettings() {
+  if (!syncRuntime.enabled || syncRuntime.applyingRemote) return;
+  try {
+    const { setDoc, serverTimestamp } = syncRuntime.modules;
+    await setDoc(settingsDoc(), { settings: state.settings, categories: state.categories, updatedAt: serverTimestamp(), updatedBy: CLIENT_ID }, { merge: true });
+  } catch (error) { console.error(error); showToast('Ajuste guardado localmente; no se pudo sincronizar.'); }
+}
+
+async function syncSaveTransaction(tx) {
+  if (!syncRuntime.enabled || syncRuntime.applyingRemote || !tx) return;
+  try { await syncRuntime.modules.setDoc(syncRuntime.modules.doc(txCollection(), tx.id), { ...tx, updatedAt: new Date().toISOString(), updatedBy: CLIENT_ID }, { merge: true }); }
+  catch (error) { console.error(error); showToast('Movimiento guardado localmente; no se pudo sincronizar.'); }
+}
+
+async function syncDeleteTransaction(id) {
+  if (!syncRuntime.enabled || !id) return;
+  try { await syncRuntime.modules.deleteDoc(syncRuntime.modules.doc(txCollection(), id)); }
+  catch (error) { console.error(error); showToast('Movimiento eliminado localmente; no se pudo borrar en nube.'); }
+}
+
+async function syncSaveGoal(goal) {
+  if (!syncRuntime.enabled || syncRuntime.applyingRemote || !goal) return;
+  try { await syncRuntime.modules.setDoc(syncRuntime.modules.doc(goalsCollection(), goal.id), { ...goal, updatedAt: new Date().toISOString(), updatedBy: CLIENT_ID }, { merge: true }); }
+  catch (error) { console.error(error); showToast('Meta guardada localmente; no se pudo sincronizar.'); }
+}
+
+async function syncDeleteGoal(id) {
+  if (!syncRuntime.enabled || !id) return;
+  try { await syncRuntime.modules.deleteDoc(syncRuntime.modules.doc(goalsCollection(), id)); }
+  catch (error) { console.error(error); showToast('Meta eliminada localmente; no se pudo borrar en nube.'); }
+}
+
+function updateSyncUI(customText = '') {
+  const connected = syncRuntime.enabled && syncRuntime.groupId;
+  const pill = $('#syncStatusPill');
+  const text = $('#syncStatusText');
+  const top = $('#syncTopStatus');
+  if (pill) { pill.textContent = connected ? 'En nube' : 'Local'; pill.className = `pill ${connected ? 'green' : 'amber'}`; }
+  if (text) text.textContent = customText || (connected ? `Conectado al grupo: ${syncRuntime.groupId}. Los cambios se sincronizan entre celulares.` : 'Sin conectar. La información se guarda solo en este celular.');
+  if (top) top.textContent = connected ? `Compartido · ${syncRuntime.groupId}` : 'Control compartido · V4 Sync';
+  const group = $('#syncGroupId'); if (group) group.value = syncSettings.groupId || syncRuntime.groupId || '';
+  const configBox = $('#firebaseConfigInput');
+  if (configBox && !configBox.value && syncSettings.config) configBox.value = JSON.stringify(syncSettings.config, null, 2);
 }
 
 function makeId() {
@@ -925,10 +1211,13 @@ function buildSuggestions() {
 function renderAnalysis() {
   const freq = $('#analysisFrequency').value;
   const base = parseLocalDate($('#analysisDate').value || todayISO());
-  const { start, end, label } = periodRange(freq === 'day' ? 'day' : freq, base);
   let range;
-  if (freq === 'day') range = { start: base, end: addDays(base, 1), label: 'Día' };
-  else range = { start, end, label };
+  if (freq === 'day') {
+    range = { start: base, end: addDays(base, 1), label: 'Día' };
+  } else {
+    const { start, end, label } = periodRange(freq, base);
+    range = { start, end, label };
+  }
   const items = transactionsInRange(range.start, range.end);
   const income = sumTransactions(items, 'income');
   const expense = sumTransactions(items, 'expense');
@@ -1003,8 +1292,9 @@ function addTransaction(type, amountValue, category, date, note) {
   const amount = cleanNumber(amountValue);
   if (!(amount > 0)) { showToast('Captura una cantidad válida.'); return false; }
   if (!date) { showToast('Selecciona una fecha.'); return false; }
-  state.transactions.push({ id: makeId(), type, amount, category, date, note: note || '', time: new Date().toTimeString().slice(0,5), createdAt: new Date().toISOString() });
-  saveState(); render(); return true;
+  const tx = { id: makeId(), type, amount, category, date, note: note || '', time: new Date().toTimeString().slice(0,5), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+  state.transactions.push(tx);
+  saveState(); syncSaveTransaction(tx); render(); return true;
 }
 
 function renderGoals() {
@@ -1064,8 +1354,9 @@ function addGoal() {
   const deadline = $('#goalDeadline').value;
   if (!name || !(targetAmount > 0) || !deadline) { showToast('Completa nombre, monto y fecha.'); return false; }
   if (savedAmount > targetAmount) { showToast('Lo apartado no puede ser mayor al objetivo.'); return false; }
-  state.goals.push({ id: makeId(), name, targetAmount, savedAmount, deadline, type: $('#goalType').value, priority: $('#goalPriority').value, note: $('#goalNote').value.trim(), contributions: [], createdAt: new Date().toISOString() });
-  saveState(); render(); return true;
+  const goal = { id: makeId(), name, targetAmount, savedAmount, deadline, type: $('#goalType').value, priority: $('#goalPriority').value, note: $('#goalNote').value.trim(), contributions: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+  state.goals.push(goal);
+  saveState(); syncSaveGoal(goal); render(); return true;
 }
 
 function addGoalContribution(goalId) {
@@ -1083,7 +1374,8 @@ function addGoalContribution(goalId) {
     goal.savedAmount = newSaved;
     goal.contributions.push({ id: makeId(), amount, date: todayISO(), note: '' });
   }
-  saveState(); render(); showToast('Aportación guardada.');
+  goal.updatedAt = new Date().toISOString();
+  saveState(); syncSaveGoal(goal); render(); showToast('Aportación guardada.');
 }
 
 function deleteGoal(goalId) {
@@ -1091,7 +1383,7 @@ function deleteGoal(goalId) {
   if (!goal) return;
   if (!confirm(`¿Eliminar la meta "${goal.name}"?`)) return;
   state.goals = state.goals.filter((g) => g.id !== goalId);
-  saveState(); render(); showToast('Meta eliminada.');
+  saveState(); syncDeleteGoal(goalId); render(); showToast('Meta eliminada.');
 }
 
 function renderHistory() {
@@ -1121,6 +1413,7 @@ function formatDate(iso) { return parseLocalDate(iso).toLocaleDateString('es-MX'
 function renderSettings() {
   $('#initialBalance').value = state.settings.initialBalance || '';
   $('#monthlyGoal').value = state.settings.monthlyGoal || '';
+  updateSyncUI();
 }
 
 function exportCsv() {
@@ -1167,14 +1460,14 @@ function importCsv(text) {
     const type = typeRaw.includes('ing') || typeRaw === 'income' ? 'income' : 'expense';
     if (amount > 0 && date) { state.transactions.push({ id: makeId(), type, amount, category, date, note, time: '12:00', createdAt: new Date().toISOString() }); count++; }
   });
-  saveState(); render(); return count;
+  saveState(); render(); if (syncRuntime.enabled) pushLocalStateToCloud(false); return count;
 }
 function importJson(text) {
   const data = JSON.parse(text);
   if (Array.isArray(data.transactions) || Array.isArray(data.goals)) state = migrateState(data);
   else if (Array.isArray(data)) state.transactions.push(...data.map(normalizeTransaction).filter(Boolean));
   else throw new Error('Formato no reconocido');
-  saveState(); fillCategorySelects(); render();
+  saveState(); fillCategorySelects(); render(); if (syncRuntime.enabled) pushLocalStateToCloud(false);
 }
 
 function showView(viewName) {
@@ -1201,10 +1494,15 @@ function registerEvents() {
   $('#gastoForm').addEventListener('submit', (event) => { event.preventDefault(); if (addTransaction('expense', $('#gastoAmount').value, $('#gastoCategory').value, $('#gastoDate').value, $('#gastoNote').value)) { event.target.reset(); $('#gastoDate').value = todayISO(); showToast('Gasto guardado.'); showView('resumen'); } });
   $('#ingresoForm').addEventListener('submit', (event) => { event.preventDefault(); if (addTransaction('income', $('#ingresoAmount').value, $('#ingresoCategory').value, $('#ingresoDate').value, $('#ingresoNote').value)) { event.target.reset(); $('#ingresoDate').value = todayISO(); showToast('Ingreso guardado.'); showView('resumen'); } });
   $('#goalForm').addEventListener('submit', (event) => { event.preventDefault(); if (addGoal()) { event.target.reset(); $('#goalDeadline').value = suggestedDeadline(); showToast('Meta guardada.'); showView('metas'); } });
-  $('#settingsForm').addEventListener('submit', (event) => { event.preventDefault(); state.settings.initialBalance = cleanNumber($('#initialBalance').value || 0); state.settings.monthlyGoal = cleanNumber($('#monthlyGoal').value || 0); saveState(); render(); showToast('Ajustes guardados.'); });
+  $('#settingsForm').addEventListener('submit', async (event) => { event.preventDefault(); state.settings.initialBalance = cleanNumber($('#initialBalance').value || 0); state.settings.monthlyGoal = cleanNumber($('#monthlyGoal').value || 0); saveState(); await syncSaveSettings(); render(); showToast('Ajustes guardados.'); });
 
-  $('#historyList').addEventListener('click', (event) => { const btn = event.target.closest('[data-delete]'); if (!btn) return; if (!confirm('¿Eliminar este movimiento?')) return; state.transactions = state.transactions.filter((tx) => tx.id !== btn.dataset.delete); saveState(); render(); showToast('Movimiento eliminado.'); });
+  $('#historyList').addEventListener('click', (event) => { const btn = event.target.closest('[data-delete]'); if (!btn) return; if (!confirm('¿Eliminar este movimiento?')) return; const id = btn.dataset.delete; state.transactions = state.transactions.filter((tx) => tx.id !== id); saveState(); syncDeleteTransaction(id); render(); showToast('Movimiento eliminado.'); });
   $('#goalsList').addEventListener('click', (event) => { const contribution = event.target.closest('[data-add-contribution]'); const del = event.target.closest('[data-delete-goal]'); if (contribution) addGoalContribution(contribution.dataset.addContribution); if (del) deleteGoal(del.dataset.deleteGoal); });
+
+  $('#generateGroupBtn').addEventListener('click', () => { const code = `fin-${Math.random().toString(36).slice(2, 6)}-${Math.random().toString(36).slice(2, 8)}`; $('#syncGroupId').value = code; syncSettings.groupId = code; saveSyncSettings(); updateSyncUI(); showToast('Código generado. Úsenlo en ambos celulares.'); });
+  $('#connectSyncBtn').addEventListener('click', async () => { try { await connectSyncFromInputs(); } catch (error) { console.error(error); showToast(error.message || 'No se pudo conectar.'); } });
+  $('#uploadLocalBtn').addEventListener('click', async () => { if (!syncRuntime.enabled) { showToast('Primero conecta la sincronización.'); return; } const ok = confirm('Esto reemplazará la nube con los datos actuales de este celular. ¿Continuar?'); if (ok) await pushLocalStateToCloud(true); });
+  $('#disconnectSyncBtn').addEventListener('click', () => { if (!confirm('Se desactivará la sincronización solo en este celular. Tus datos locales se quedan guardados. ¿Continuar?')) return; syncSettings.enabled = false; saveSyncSettings(); stopSync(); showToast('Sincronización desactivada en este celular.'); });
 
   $('#exportJsonBtn').addEventListener('click', () => downloadFile(`respaldo-finanzas-${todayISO()}.json`, JSON.stringify(state, null, 2), 'application/json'));
   $('#exportCsvBtn').addEventListener('click', exportCsv);
@@ -1215,7 +1513,7 @@ function registerEvents() {
     catch (error) { console.error(error); showToast('No se pudo importar el archivo.'); }
     finally { event.target.value = ''; }
   });
-  $('#clearDataBtn').addEventListener('click', () => { if (!confirm('Esto borrará movimientos y metas guardados en este dispositivo. ¿Continuar?')) return; state = clone(defaultState); saveState(); fillCategorySelects(); render(); showToast('Datos borrados.'); });
+  $('#clearDataBtn').addEventListener('click', () => { if (syncRuntime.enabled) { showToast('Desactiva sincronización antes de borrar datos locales.'); return; } if (!confirm('Esto borrará movimientos y metas guardados en este dispositivo. ¿Continuar?')) return; state = clone(defaultState); saveState(); fillCategorySelects(); render(); showToast('Datos borrados.'); });
 
   window.addEventListener('beforeinstallprompt', (event) => { event.preventDefault(); deferredPrompt = event; $('#installBtn').classList.remove('hidden'); });
   $('#installBtn').addEventListener('click', async () => { if (!deferredPrompt) return; deferredPrompt.prompt(); await deferredPrompt.userChoice; deferredPrompt = null; $('#installBtn').classList.add('hidden'); });
@@ -1245,6 +1543,7 @@ function init() {
   fillCategorySelects();
   $('#gastoDate').value = todayISO(); $('#ingresoDate').value = todayISO(); $('#analysisDate').value = todayISO(); $('#goalDeadline').value = suggestedDeadline();
   registerEvents(); render(); setupServiceWorker(); saveState();
+  if (syncSettings.enabled && syncSettings.groupId && getActiveFirebaseConfig()) connectSync({ askBeforeReplacingLocal: false });
 }
 
 init();

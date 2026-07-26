@@ -1,4 +1,4 @@
-const CACHE_NAME = 'finanzas-pareja-v3-2-saldo-inicial-20260726';
+const CACHE_NAME = 'finanzas-pareja-v4-sync-20260726';
 const APP_SHELL = ['./', './index.html', './manifest.webmanifest', './icon.svg'];
 
 self.addEventListener('install', (event) => {
@@ -28,6 +28,7 @@ self.addEventListener('fetch', (event) => {
   }
   event.respondWith(
     caches.match(request).then((cached) => cached || fetch(request).then((response) => {
+      if (!response || response.status !== 200) return response;
       const copy = response.clone();
       caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
       return response;
