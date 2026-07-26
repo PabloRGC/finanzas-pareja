@@ -22,3 +22,7 @@ No borres datos del sitio en Chrome si quieres conservar la información local.
 ## Nota importante
 
 La información se guarda localmente en el navegador del dispositivo. Si dos personas usan celulares distintos, cada celular guarda su propia información. Para sincronización real entre ambos celulares se necesitaría conectar una base de datos o Google Sheets como backend.
+
+
+## Nota V3.1
+Corrige un error de inicio que podía impedir que los botones respondieran en algunos dispositivos después de actualizar desde versiones anteriores. Mantiene la misma llave de almacenamiento para conservar movimientos y metas.

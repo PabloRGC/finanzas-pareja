@@ -217,7 +217,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--primary); box-sh
         <div class="logo">$</div>
         <div>
           <h1>Finanzas</h1>
-          <p>Control compartido · V3 Metas</p>
+          <p>Control compartido · V3.1 Metas</p>
         </div>
       </div>
       <button id="installBtn" class="install-btn hidden" type="button">Instalar</button>
@@ -547,7 +547,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--primary); box-sh
 
 <script>
 const STORAGE_KEY = 'finanzasPareja.v1';
-const APP_VERSION = '3.0.0-metas';
+const APP_VERSION = '3.1.0-metas-fix';
 
 const defaultState = {
   version: APP_VERSION,
@@ -560,13 +560,13 @@ const defaultState = {
   goals: []
 };
 
+const $ = (selector) => document.querySelector(selector);
+const $$ = (selector) => Array.from(document.querySelectorAll(selector));
+function clone(obj) { return JSON.parse(JSON.stringify(obj)); }
+
 let state = loadState();
 let deferredPrompt = null;
 let refreshOnControllerChange = false;
-
-const $ = (selector) => document.querySelector(selector);
-const $$ = (selector) => Array.from(document.querySelectorAll(selector));
-const clone = (obj) => JSON.parse(JSON.stringify(obj));
 
 function loadState() {
   try {
