@@ -100,6 +100,7 @@ a { color: inherit; }
 .hero .sub { margin: 10px 0 0; color: var(--muted); line-height: 1.4; max-width: 360px; }
 .hero-row { position: relative; z-index: 1; display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
 .quick-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 18px; position: relative; z-index: 1; }
+.quick-actions .full { grid-column: 1 / -1; }
 .primary-btn { background: linear-gradient(135deg, var(--primary), var(--primary-2)); color: #fff; padding: 14px 15px; box-shadow: 0 14px 28px rgba(36,107,253,.25); }
 .ghost-btn { background: #eef4ff; color: #1d4ed8; padding: 14px 15px; }
 .danger-btn { background: var(--red-soft); color: var(--red); padding: 13px 14px; }
@@ -192,7 +193,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--primary); box-sh
   width: min(calc(100% - 18px), 540px); background: rgba(255,255,255,.94); backdrop-filter: blur(14px);
   border: 1px solid rgba(228,231,236,.90); border-radius: 28px; padding: 8px;
   box-shadow: 0 20px 50px rgba(15,23,42,.22);
-  display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px;
+  display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px;
 }
 .nav-item { border: 0; border-radius: 20px; background: transparent; color: var(--muted); padding: 8px 4px; display: grid; gap: 2px; place-items: center; font-weight: 800; font-size: .68rem; }
 .nav-item .ico { font-size: 1.08rem; }
@@ -205,7 +206,8 @@ input:focus, select:focus, textarea:focus { border-color: var(--primary); box-sh
   .form-grid.two { grid-template-columns: 1fr; }
   .hero-row { display: block; }
   .quick-actions { grid-template-columns: 1fr; }
-  .bottom-nav { grid-template-columns: repeat(3, 1fr); }
+  .bottom-nav { grid-template-columns: repeat(4, 1fr); }
+  .app-shell { padding-bottom: calc(150px + env(safe-area-inset-bottom)); }
   .goal-actions { grid-template-columns: 1fr; }
 }
   </style>
@@ -217,7 +219,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--primary); box-sh
         <div class="logo">$</div>
         <div>
           <h1>Finanzas</h1>
-          <p>Control compartido · V3.1 Metas</p>
+          <p>Control compartido · V3.2 Saldo inicial</p>
         </div>
       </div>
       <button id="installBtn" class="install-btn hidden" type="button">Instalar</button>
@@ -236,8 +238,20 @@ input:focus, select:focus, textarea:focus { border-color: var(--primary); box-sh
         <div class="quick-actions">
           <button class="primary-btn" type="button" data-open="gasto">+ Gasto</button>
           <button class="ghost-btn" type="button" data-open="ingreso">+ Ingreso</button>
+          <button class="ghost-btn full" type="button" data-open="ajustes">⚙️ Saldo inicial / ajustes</button>
         </div>
       </div>
+
+      <section class="panel">
+        <div class="panel-title">
+          <div>
+            <h3>Saldo inicial</h3>
+            <p id="initialBalanceHint" class="muted">Configuren aquí el dinero con el que empezaron.</p>
+          </div>
+          <span id="initialBalanceHome" class="pill green">$0.00</span>
+        </div>
+        <button class="mini-btn" type="button" data-open="ajustes">Editar saldo inicial</button>
+      </section>
 
       <div class="toolbar">
         <label>Ver resumen por
@@ -542,12 +556,13 @@ input:focus, select:focus, textarea:focus { border-color: var(--primary); box-sh
     <button class="nav-item" data-view="analisis" type="button"><span class="ico">📊</span><span>Análisis</span></button>
     <button class="nav-item" data-view="metas" type="button"><span class="ico">🎯</span><span>Metas</span></button>
     <button class="nav-item" data-view="historial" type="button"><span class="ico">🧾</span><span>Historial</span></button>
+    <button class="nav-item" data-view="ajustes" type="button"><span class="ico">⚙️</span><span>Ajustes</span></button>
   </nav>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
 <script>
 const STORAGE_KEY = 'finanzasPareja.v1';
-const APP_VERSION = '3.1.0-metas-fix';
+const APP_VERSION = '3.2.0-saldo-inicial';
 
 const defaultState = {
   version: APP_VERSION,
@@ -778,8 +793,11 @@ function renderHome() {
   const balance = totalBalance();
   const saved = totalGoalsSaved();
   const available = availableBalance();
+  const initial = Number(state.settings.initialBalance || 0);
   $('#availableBalance').textContent = money(available);
   $('#balanceCaption').textContent = `Saldo real: ${money(balance)} · Apartado en metas: ${money(saved)}`;
+  $('#initialBalanceHome').textContent = money(initial);
+  $('#initialBalanceHint').textContent = initial > 0 ? 'Este monto se suma a ingresos y resta gastos para calcular el saldo real.' : 'Aún no han capturado el dinero inicial. Toca editar para colocarlo.';
   const health = $('#savingHealthPill');
   if (available < 0) {
     health.textContent = 'Revisar'; health.className = 'pill red';

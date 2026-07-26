@@ -1,4 +1,4 @@
-const CACHE_NAME = 'finanzas-pareja-v3-1-metas-fix-20260726';
+const CACHE_NAME = 'finanzas-pareja-v3-2-saldo-inicial-20260726';
 const APP_SHELL = ['./', './index.html', './manifest.webmanifest', './icon.svg'];
 
 self.addEventListener('install', (event) => {
