@@ -1,18 +1,14 @@
 {
   "name": "Finanzas",
   "short_name": "Finanzas",
-  "description": "Control sencillo de ingresos, gastos y análisis financiero.",
-  "start_url": "./",
+  "description": "Control de ingresos, gastos, análisis y metas de ahorro.",
+  "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
-  "background_color": "#0f172a",
-  "theme_color": "#0f172a",
+  "background_color": "#102033",
+  "theme_color": "#102033",
+  "orientation": "portrait",
   "icons": [
-    {
-      "src": "assets/icon.svg",
-      "sizes": "any",
-      "type": "image/svg+xml",
-      "purpose": "any maskable"
-    }
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
   ]
 }
